@@ -96,6 +96,20 @@ def wheel_columns(X, aY, Z, W_mm, x_front_mm):
     return np.maximum(out[0], out[1])
 
 
+def claw_rings(X, aY, Z, W_mm, x_front_mm):
+    """T7.13: the claw ring 1.5 mm in from each wheel's inner face over its outer 1.5 mm of
+    radius (legality T7.13, CLAW_LIP_MM). The wheel columns already cover it; kept explicit
+    so the carve can never leave body there (44130/0, 44430/0, Part 4, 2026-11-14)."""
+    from geometry_contract import FRONT_WHEEL_INNER_Y_M, REAR_WHEEL_INNER_Y_M, R_WHEEL_M
+    lip, R = 1.5, R_WHEEL_M * 1e3
+    out = []
+    for ax, inner in ((x_front_mm, FRONT_WHEEL_INNER_Y_M), (x_front_mm + W_mm, REAR_WHEEL_INNER_Y_M)):
+        yi = inner * 1e3
+        rho = np.hypot(X - ax, Z - R)
+        out.append(np.minimum(_box(X, aY, Z, y=(yi - lip, yi)), lip / 2 - np.abs(rho - (R - lip / 2))))
+    return np.maximum(out[0], out[1])
+
+
 def t79_zones(X, aY, Z, W_mm, x_front_mm):
     """wheel_visibility_zones.build_t79_forbidden_mask: the T7.9.1 and T7.9.4 rectangles and
     the T7.9.2 / T7.9.3 wedges, without the mask's one-cell growth (MARGIN_MM instead)."""
@@ -194,6 +208,7 @@ def air_field_mm(g, X, Y, Z) -> np.ndarray:
         envelope_air(X, aY, Z, g.bv, default_rule_envelope(), d) + MARGIN_MM,
         wheel_columns(X, aY, Z, g.W_mm, g.x_front_mm) + MARGIN_MM,
         t79_zones(X, aY, Z, g.W_mm, g.x_front_mm) + MARGIN_MM,
+        claw_rings(X, aY, Z, g.W_mm, g.x_front_mm) + MARGIN_MM,
         t851_cap(X, aY, Z, ref_A) + MARGIN_MM,
         # The pocket only. Stamping the ballast capsule at its exact size let the rounding of
         # its top rim eat the pocket floor up to 0.85 mm beyond it, under the T4.2 cargo (6-20
@@ -240,6 +255,7 @@ def air_at_points(g, P):
     return np.maximum.reduce([
         envelope_air(X, aY, Z, g.bv, default_rule_envelope(), None) + MARGIN_MM,
         wheel_columns(X, aY, Z, g.W_mm, g.x_front_mm) + MARGIN_MM,
+        claw_rings(X, aY, Z, g.W_mm, g.x_front_mm) + MARGIN_MM,
         t79_zones(X, aY, Z, g.W_mm, g.x_front_mm) + MARGIN_MM,
         t851_cap(X, aY, Z, ref_A) + MARGIN_MM,
         block_slot(X, aY, Z) - 1e-6,
