@@ -115,7 +115,7 @@ if "hash" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # hash: a hash of eve
     import tempfile as _tf
     import trimesh as _tm
     import shutil as _sh
-    _rm, _n = _sh.rmtree, [0]
+    _rm, _n, _seed = _sh.rmtree, [0], int(sys.argv[1])
 
     def _rm_hash(d, *a, **k):          # build_one deletes its folder at the end: hash it first
         _n[0] += 1
@@ -127,7 +127,7 @@ if "hash" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # hash: a hash of eve
                 h = _hl.sha256(np.load(p).tobytes()).hexdigest()[:16]
             else:
                 continue
-            print("LAB hash", json.dumps({"seed": int(sys.argv[1]), "car": _n[0] - 1, "file": str(p.relative_to(d)), "sha": h}), flush=True)
+            print("LAB hash", json.dumps({"seed": _seed, "car": _n[0] - 1, "file": str(p.relative_to(d)), "sha": h}), flush=True)
         return _rm(d, *a, **k)
     sc.shutil.rmtree = _rm_hash
 seed, n = int(sys.argv[1]), int(sys.argv[2])
