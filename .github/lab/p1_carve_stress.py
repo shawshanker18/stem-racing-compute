@@ -110,6 +110,24 @@ if "where" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # where: the slivers
                                                "sliver_pct": round(100 * float(s.mean()), 2), "top5mm": top}), flush=True)
         return row
     sc.build_one = _where
+if "hash" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # hash: a hash of every mesh each car writes (same-body proof)
+    import hashlib as _hl
+    import tempfile as _tf
+    import trimesh as _tm
+    _mk2, _hd = _tf.mkdtemp, []
+    _tf.mkdtemp = lambda *a, **k: (_hd.append(_mk2(*a, **k)) or _hd[-1])
+    _b2 = sc.build_one
+
+    def _hash(c):
+        n0 = len(_hd)
+        row = _b2(c)
+        for d in _hd[n0:]:
+            for p in sorted(Path(d).rglob("*.stl")):
+                m = _tm.load(p, force="mesh")
+                h = _hl.sha256(np.round(np.asarray(m.vertices), 9).tobytes() + np.asarray(m.faces).tobytes()).hexdigest()[:16]
+                print("LAB hash", json.dumps({"car": getattr(c, "name", str(c)), "file": p.name, "faces": len(m.faces), "sha": h}), flush=True)
+        return row
+    sc.build_one = _hash
 seed, n = int(sys.argv[1]), int(sys.argv[2])
 MODE = sys.argv[3] if len(sys.argv) > 3 else ""     # nocorner | nobars: switch off one 11-Nov cutter change
 if "nocorner" in MODE:                                # corner relief for every body (6b95197) off
