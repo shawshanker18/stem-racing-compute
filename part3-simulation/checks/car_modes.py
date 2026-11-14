@@ -150,7 +150,7 @@ def run_car(item: str, ref: str | None, out: Path) -> Path:
     runs = Path("../part2-simulation/cfd_case_template/runs")
     shutil.rmtree(runs, ignore_errors=True)
     cmd = [sys.executable, "-W", "ignore", "run_car.py", "--out", str(o), "--skin-mm", SKIN, "--support", "beam",
-           "--phi-npy", str(o / "field.npy"), "--cfd", "--cfd-iters", ITERS, "--res", mesh(), "--np", "2",
+           "--phi-npy", str(o / "field.npy"), "--cfd", "--cfd-if-legal", "--cfd-iters", ITERS, "--res", mesh(), "--np", "2",
            "--keep-runs", "--cfd-json", json.dumps(opt)]
     p = subprocess.run(cmd, capture_output=True, text=True)
     if p.returncode != 0:
@@ -161,15 +161,22 @@ def run_car(item: str, ref: str | None, out: Path) -> Path:
         print(p.stdout[-3000:], p.stderr[-3000:])
         raise RuntimeError(f"run_car failed on {item}")
     (o / "field.npy").unlink()
+    S = json.loads((o / "summary.json").read_text())
+    failed = sorted(k for k, v in S["legality"]["checks"].items() if not v["pass"])
+    if failed:                                            # the referee's check: an illegal car is never timed
+        rec = {"item": item, "legal": False, "failed": failed, "T_s": None}
+        (o / "result.json").write_text(json.dumps(rec))
+        shutil.rmtree(runs, ignore_errors=True)
+        print(f"LAB {item}: ILLEGAL ({', '.join(failed)}), not timed", flush=True)
+        return o
     resumed = os.environ.get("P2_RESUME_CASE")
     run = Path(resumed) if resumed else next(runs.iterdir())
     if item == "base":
         dst = out / "refmesh"
         shutil.rmtree(dst, ignore_errors=True)
         shutil.copytree(run, dst, ignore=shutil.ignore_patterns("processor*", "logs", "postProcessing"))
-    S = json.loads((o / "summary.json").read_text())
     c = S["cfd_initial"]
-    rec = {"item": item, "T_s": c["T_at_target_s"], "D_N": c["D20_N"], "L_N": c["L_N"],
+    rec = {"item": item, "legal": True, "T_s": c["T_at_target_s"], "D_N": c["D20_N"], "L_N": c["L_N"],
            "converged": c["converged"], "morph_fallback": (run / "MORPH_FALLBACK").exists(),
            "parts_D_N": {k: v["D_N"] for k, v in (c.get("parts") or {}).items()}}
     (o / "result.json").write_text(json.dumps(rec, default=float))
@@ -208,7 +215,8 @@ def run(ref: str | None, out: Path, its):
 
 def judge(d: Path):
     d = Path(d)
-    R = {json.loads(p.read_text())["item"]: (json.loads(p.read_text()), p.parent) for p in d.rglob("result.json")}
+    R = {json.loads(p.read_text())["item"]: (json.loads(p.read_text()), p.parent) for p in d.rglob("result.json")
+         if json.loads(p.read_text()).get("legal", True)}           # illegal items are never in a map
     A = np.load(next(d.rglob("base_surface.npz")))["A"]
     base = R["base"][0]
     bad = sorted(k for k, (r, _) in R.items() if not r["converged"] or r["morph_fallback"])
