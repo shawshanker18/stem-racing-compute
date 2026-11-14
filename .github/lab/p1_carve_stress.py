@@ -110,6 +110,26 @@ if "where" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # where: the slivers
                                                "sliver_pct": round(100 * float(s.mean()), 2), "top5mm": top}), flush=True)
         return row
     sc.build_one = _where
+if "hash" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # hash: a hash of every mesh each car writes (same-body proof)
+    import hashlib as _hl
+    import tempfile as _tf
+    import trimesh as _tm
+    import shutil as _sh
+    _rm, _n, _seed = _sh.rmtree, [0], int(sys.argv[1])
+
+    def _rm_hash(d, *a, **k):          # build_one deletes its folder at the end: hash it first
+        _n[0] += 1
+        for p in sorted(Path(d).rglob("*")):
+            if p.suffix == ".stl":
+                m = _tm.load(p, force="mesh")
+                h = _hl.sha256(np.round(np.asarray(m.vertices), 9).tobytes() + np.asarray(m.faces).tobytes()).hexdigest()[:16]
+            elif p.suffix == ".npy":
+                h = _hl.sha256(np.load(p).tobytes()).hexdigest()[:16]
+            else:
+                continue
+            print("LAB hash", json.dumps({"seed": _seed, "car": _n[0] - 1, "file": str(p.relative_to(d)), "sha": h}), flush=True)
+        return _rm(d, *a, **k)
+    sc.shutil.rmtree = _rm_hash
 seed, n = int(sys.argv[1]), int(sys.argv[2])
 MODE = sys.argv[3] if len(sys.argv) > 3 else ""     # nocorner | nobars: switch off one 11-Nov cutter change
 if "nocorner" in MODE:                                # corner relief for every body (6b95197) off
