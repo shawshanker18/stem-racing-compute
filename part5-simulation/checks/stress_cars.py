@@ -105,34 +105,27 @@ def random_carve(rng: random.Random) -> dict:
     return c
 
 
-def carve_field(c: dict, path: Path) -> None:
-    """Carve the block as the carving step does (Hamilton-Jacobi moves of a signed distance
-    field), with a random velocity, and save the field for run_car --phi-npy."""
+def carve_edits(c: dict) -> list:
+    """The stress car's carve as Part 1's carve edits: its blobs and thinning bias, one cut per
+    step at a 1 mm peak; one car in four (chosen from the carve itself) thinned hard toward the
+    48 g floor."""
+    import zlib
     import numpy as np
-    import param_body as pb
-    import unified_phi as up
-    from coarse import use_spacing
-    from phi_updater import hj_update, reinitialise_sdf
-    use_spacing(1.0)
-    lay = {"W": 120.3, "x_front": 46.0, "d_halo": 43.72, **c.get("layout", {})}
-    block = up.build_unified_geometry(lay["W"], lay["x_front"], lay["d_halo"], init_mode="full").phi.grid * 1e3
-    g = pb.build(lay["W"], lay["x_front"], lay["d_halo"], pb.BodyParams(), skin_offset_mm=0.0, field_mm=block)
-    r, d = g.region, up.GRID_SPACING_M
-    X, Y, Z = np.meshgrid(*[(r.origin_m[k] + np.arange(r.shape[k]) * d) for k in range(3)], indexing="ij")
-    solid = g.phi.grid < 0
-    lo = np.array([X[solid].min(), 0.0, Z[solid].min()])
-    hi = np.array([X[solid].max(), Y[solid].max(), Z[solid].max()])
-    V = np.full(X.shape, c["carve"]["bias_mm"] * 1e-3)
-    for b in c["carve"]["blobs"]:
-        cx, cy, cz = lo + np.array(b["u"]) * (hi - lo)
-        s2 = 2.0 * (b["sigma_mm"] * 1e-3) ** 2
-        V += b["amp_mm"] * 1e-3 * np.exp(-((X - cx) ** 2 + (np.abs(Y) - cy) ** 2 + (Z - cz) ** 2) / s2)
-    for _ in range(c["carve"]["steps"]):
-        reinitialise_sdf(g.phi)
-        hj_update(g.phi, V, 1.0)
-        g.phi.apply_hard_constraints()
-        up.enforce_symmetry(g)
-    np.save(path, np.asarray(g.phi.grid, dtype=np.float32))
+    cv = c["carve"]
+    hard = np.random.default_rng(zlib.crc32(json.dumps(cv, sort_keys=True).encode())).random() < 0.25
+    e = {"bias_mm": -2.5 if hard else cv["bias_mm"], "bumps": cv["blobs"], "unit": True,
+         "trust_mm": 1.0, "substeps": 6}
+    return [e] * (max(cv["steps"], 4) if hard else cv["steps"])
+
+
+def carve_field(c: dict, path: Path) -> None:
+    """Carve the block through Part 1's one carve path (carve.save) and save the field for
+    run_car --phi-npy. Every caller that rebuilds this car must come through here."""
+    import carve
+    lay = {"W": 120.3, "x_front": 46.0, "d_halo": 43.72,
+           **{k: v for k, v in c.get("layout", {}).items() if k in ("W", "x_front", "d_halo")}}
+    reps = carve.save(lay, carve_edits(c), path)
+    c.setdefault("layout", {})["cuts"] = [r["status"] if r["status"] == "ok" else r["reason"][:40] for r in reps]
 
 
 def build_one(c: dict) -> dict:
@@ -178,8 +171,12 @@ def _describe(c: dict) -> None:
     import numpy as np
     import run_car as rc
     import trimesh
-    args = ["--out", tempfile.mkdtemp(), "--skin-mm", FIXED_SKIN_MM, "--support", "beam",
+    out = Path(tempfile.mkdtemp())
+    args = ["--out", str(out), "--skin-mm", FIXED_SKIN_MM, "--support", "beam",
             "--body-json", json.dumps(c["car"]["params"])]
+    if "carve" in c:                     # the same body build_one judged: the carved field, not --body-json
+        carve_field(c, out / "carved.npy")
+        args = ["--out", str(out), "--skin-mm", "0", "--support", "beam", "--phi-npy", str(out / "carved.npy")]
     for key, flag in (("W", "--W"), ("x_front", "--x-front"), ("d_halo", "--d-halo")):
         if key in c.get("layout", {}):
             args += [flag, str(c["layout"][key])]

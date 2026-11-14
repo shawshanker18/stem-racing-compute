@@ -2,17 +2,13 @@
 
     python ../.github/lab/p1_carve_stress.py <seed> <n_cars>    (from part5-simulation, on GitHub)
 
-Uses Part 5's random-car tester (checks/stress_cars.py) as a library, unchanged: its random
-layouts and parts, its guarded full-car build (run_car) and every rule check. Only the carving
-is replaced: instead of raw Hamilton-Jacobi moves, each car is carved by cutter.cut, 1 to 6
-cuts, with a smooth sensitivity concentrated on the surface (Gaussian bumps of both signs plus
-a thinning bias, the random_carve recipe); one car in four is thinned hard, toward the 48 g
-floor. Prints one "LAB {json}" line per car (status, rules broken, cut verdicts, error).
+Uses Part 5's random-car tester (checks/stress_cars.py) as a library, unchanged; since
+2026-11-14 its carving is Part 1's one carve path (carve.py), so this lab builds the very bodies
+the batches judge. Below are only diagnostic switches.
+Prints one "LAB {json}" line per car (status, rules broken, cut verdicts, error).
 """
 import json
 import sys
-import warnings
-import zlib
 from pathlib import Path
 
 ROOT = Path.cwd().parent
@@ -25,37 +21,6 @@ import numpy as np  # noqa: E402
 import stress_cars as sc  # noqa: E402
 
 
-def carve_field(c: dict, path: Path) -> None:
-    import cutter
-    from unified_phi import extract_half_surface
-    lay = {"W": 120.3, "x_front": 46.0, "d_halo": 43.72, **{k: v for k, v in c.get("layout", {}).items()
-                                                          if k in ("W", "x_front", "d_halo")}}
-    cv = c["carve"]
-    rng = np.random.default_rng(zlib.crc32(json.dumps(cv, sort_keys=True).encode()))   # same on every machine
-    hard = rng.random() < 0.25
-    g = cutter.start_block(lay, spacing_mm=1.0)
-    verdicts = []
-    for _ in range(max(cv["steps"], 4) if hard else cv["steps"]):
-        v = np.asarray(extract_half_surface(g).vertices)
-        lo, hi = v.min(0), v.max(0)
-        grow = np.full(len(v), (-2.5 if hard else cv["bias_mm"]))          # +: grow, as random_carve
-        for b in cv["blobs"]:
-            cen = lo + np.array(b["u"]) * (hi - lo)
-            s = b["sigma_mm"] * 1e-3
-            grow += b["amp_mm"] * np.exp(-((v - cen) ** 2).sum(1) / (2 * s * s))
-        dT_dn = -grow / max(np.abs(grow).max(), 1e-12)                    # growing where it is fastest
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            g2, rep = cutter.cut(g, dT_dn, type("M", (), {"vertices": v})(), step_m=1.0,
-                                 max_substeps=6, trust_radius_m=1e-3)
-        verdicts.append(rep["status"] if rep["status"] == "ok" else rep["reason"][:40])
-        g = g2
-    c.setdefault("layout", {})["cuts"] = verdicts       # rides into the row (only W/x_front/d_halo become flags)
-    c["layout"]["hard"] = bool(hard)
-    cutter.save_field(g, path)
-
-
-sc.carve_field = carve_field
 if "span" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # span: what cuts the front wing's span, and where
     import legality as _lg
     import trimesh as _tm
@@ -110,6 +75,26 @@ if "where" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # where: the slivers
                                                "sliver_pct": round(100 * float(s.mean()), 2), "top5mm": top}), flush=True)
         return row
     sc.build_one = _where
+if "hash" in (sys.argv[3] if len(sys.argv) > 3 else ""):   # hash: a hash of every mesh each car writes (same-body proof)
+    import hashlib as _hl
+    import tempfile as _tf
+    import trimesh as _tm
+    import shutil as _sh
+    _rm, _n, _seed = _sh.rmtree, [0], int(sys.argv[1])
+
+    def _rm_hash(d, *a, **k):          # build_one deletes its folder at the end: hash it first
+        _n[0] += 1
+        for p in sorted(Path(d).rglob("*")):
+            if p.suffix == ".stl":
+                m = _tm.load(p, force="mesh")
+                h = _hl.sha256(np.round(np.asarray(m.vertices), 9).tobytes() + np.asarray(m.faces).tobytes()).hexdigest()[:16]
+            elif p.suffix == ".npy":
+                h = _hl.sha256(np.load(p).tobytes()).hexdigest()[:16]
+            else:
+                continue
+            print("LAB hash", json.dumps({"seed": _seed, "car": _n[0] - 1, "file": str(p.relative_to(d)), "sha": h}), flush=True)
+        return _rm(d, *a, **k)
+    sc.shutil.rmtree = _rm_hash
 seed, n = int(sys.argv[1]), int(sys.argv[2])
 MODE = sys.argv[3] if len(sys.argv) > 3 else ""     # nocorner | nobars: switch off one 11-Nov cutter change
 if "nocorner" in MODE:                                # corner relief for every body (6b95197) off
